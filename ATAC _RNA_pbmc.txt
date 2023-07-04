@@ -1,0 +1,95 @@
+# https://www.10xgenomics.com/resources/datasets/10-k-human-pbm-cs-multiome-v-1-0-chromium-controller-1-standard-2-0-0
+if (!require("BiocManager", quietly = TRUE))
+  install.packages("BiocManager")
+
+BiocManager::install("EnsDb.Hsapiens.v86")
+
+if (!require("BiocManager", quietly = TRUE))
+  install.packages("BiocManager")
+
+BiocManager::install("biovizBase")
+
+library(Seurat)
+library(Signac)
+library(tidyverse)
+library(EnsDb.Hsapiens.v86)
+
+# Joint RNA-ATAC-Seq Data Analysis using Weighted Nearest Neighbour (WNN) Analysis
+# Creating pbmc object containing both RNA seq and ATAC-Seq data
+# 10x hdh5 file contains both data types
+
+counts<- Read10X_h5("10k_PBMC_Multiome_nextgem_Chromium_Controller_filtered_feature_bc_matrix.h5")
+
+# Extract RNA and ATAC data
+rna_counts<-counts$`Gene Expression`
+atac_counts<-counts$Peaks
+
+# Create Seurat Object
+pbmc<-CreateSeuratObject(counts=rna_counts)
+pbmc[["percent.mt"]]<- PercentageFeatureSet(pbmc, pattern = "^MT-")
+
+# atac_counts for peaks in standard chromosome
+grange.counts<- StringToGRanges(rownames(atac_counts), sep=c(":","-"))
+grange.use<-seqnames(grange.counts) %in% standardChromosomes(grange.counts)
+atac_counts<- atac_counts[as.vector(grange.use),]
+
+# add gene annotations for the human genome
+annotations<- GetGRangesFromEnsDb(ensdb=EnsDb.Hsapiens.v86)
+seqlevelsStyle(annotations)<-'UCSC'
+genome(annotations)<- "hg38"
+
+frag.file<- "10k_PBMC_Multiome_nextgem_Chromium_Controller_atac_fragments.tsv.gz"
+chrom_assay<- CreateChromatinAssay(counts=atac_counts,sep=c(":","-"), genome='hg38'
+  ,fragments = frag.file, min.cells = 10, annotation = annotations)
+pbmc[["ATAC"]]<- chrom_assay
+
+rm("annotations", "atac_counts", "chrom_assay","counts","frag.file",
+   "grange.counts","grange.use","rna_counts")
+##################################################################
+
+#2 Perform basic QC analysis to filter out low quality cells
+
+VlnPlot(pbmc, features = c("nCount_ATAC", "nCount_RNA", "percent.mt"), ncol=3,
+        log=TRUE,pt.size=0)+NoLegend()
+pbmc<- subset(x=pbmc,subset=nCount_ATAC<7e4 & nCount_ATAC > 5e3 & 
+        nCount_RNA<25000 & nCount_RNA>1000 & percent.mt<20)
+######################################################################
+
+# 3 Perform pre-processing and dimension reduction on both assays independently 
+# using standard approaches for RNA and ATAC seq data
+
+# RNA analysis
+DefaultAssay(pbmc)<- "RNA"
+pbmc<-SCTransform(pbmc, verbose = FALSE) %>% RunPCA() %>% RunUMAP(dims=1:50,
+      reduction.name='umap.rna', reduction.key = 'rnaUMAP_')
+DimPlot(pbmc,label=TRUE) + ggtitle("RNA")
+
+# ATAC analysis
+# we exclude the first dimention as this is typically correlated with sequencing depth
+DefaultAssay(pbmc)<- "ATAC"
+pbmc<-RunTFIDF(pbmc)
+pbmc<-FindTopFeatures(pbmc,min.cutoff = 'q0')
+pbmc<-RunSVD(pbmc)
+pbmc<-RunUMAP(pbmc, reduction = 'lsi', dims=2:50, reduction.name = "umap.atac",
+              reduction.key = "atacUMAP_")
+DimPlot(pbmc, label=TRUE)+ ggtitle("ATAC")
+
+###############################################################
+
+# 4 Identify multimodal neighbors using WNN analysis
+pbmc<-FindMultiModalNeighbors(pbmc, reduction.list = list("pca","lsi"),
+        dims.list = list(1:50,2:50))
+pbmc<- RunUMAP(pbmc, nn.name = "weighted.nn", reduction.name = "wnn.umap",
+        reduction.key = "wnnUMAP_")
+pbmc<-FindClusters(pbmc, graph.name = "wsnn", algorithm = 3, verbose = FALSE)
+DimPlot(pbmc, reduction = "wnn.umap", label=TRUE, repel=TRUE)+ggtitle("WNN")
+
+# perform sub-clustering on cluster 6 to find additional structures
+pbmc<-FindSubCluster(pbmc, cluster=6, graph.name = "wsnn",algorithm = 3)
+Idents(pbmc)<-"sub.cluster"
+
+DimPlot(pbmc, reduction = "wnn.umap", label=TRUE)+ggtitle("WNN")
+
+#####################################################################
+
+
