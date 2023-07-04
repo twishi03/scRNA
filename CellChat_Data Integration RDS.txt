@@ -1,0 +1,143 @@
+install.packages("Seurat")
+install.packages("SeuratObject")
+install.packages("tidyverse")
+#remotes::install_github("satijalab/seurat", "seurat5", quiet = TRUE)
+library(CellChat)
+library(SeuratObject)
+library(tidyverse)
+library(Seurat) 
+# Read Data
+CON_I<- Read10X( data.dir="CONI/")
+CON_II<- Read10X( data.dir="CONII/")
+ 
+NASH_I<- Read10X( data.dir="NASHI/")
+NASH_II<- Read10X( data.dir="NASHII/")
+ 
+# Create Seurat Object
+CON_I<-CreateSeuratObject(counts = CON_I, project = "CON", min.cells = 3, min.features = 200 )
+CON_I<-PercentageFeatureSet(CON_I, pattern = "^MT-", col.name = "percent.mt")
+
+CON_II<-CreateSeuratObject(counts = CON_II, project = "CON", min.cells = 3, min.features = 200 )
+CON_II<-PercentageFeatureSet(CON_II, pattern = "^MT-", col.name = "percent.mt")
+
+
+NASH_I<-CreateSeuratObject(counts = NASH_I, project = "NASH", min.cells = 3, min.features = 200 )
+NASH_I<-PercentageFeatureSet(NASH_I, pattern = "^MT-", col.name = "percent.mt")
+
+NASH_II<-CreateSeuratObject(counts = NASH_II, project = "NASH", min.cells = 3, min.features = 200 )
+NASH_II<-PercentageFeatureSet(NASH_II, pattern = "^MT-", col.name = "percent.mt")
+
+ 
+
+# Filter Low quality Cells
+VlnPlot(CON_I, features = c("nFeature_RNA", "nCount_RNA", "percent.mt"),ncol = 3)
+CON_I<-subset(CON_I, subset=nFeature_RNA<4000 & nCount_RNA<20000 & percent.mt<20)
+
+VlnPlot(CON_II, features = c("nFeature_RNA", "nCount_RNA", "percent.mt"), ncol = 3)
+CON_II<-subset(CON_II, subset=nFeature_RNA<4000 & nCount_RNA<10000 & percent.mt<20)
+
+VlnPlot(NASH_I, features = c("nFeature_RNA", "nCount_RNA", "percent.mt"), ncol = 3)
+NASH_I<-subset(NASH_I, subset=nFeature_RNA<4000 & nCount_RNA<10000 & percent.mt<20)
+
+VlnPlot(NASH_II, features = c("nFeature_RNA", "nCount_RNA", "percent.mt"), ncol = 3)
+NASH_II<-subset(NASH_II, subset=nFeature_RNA<4000 & nCount_RNA<10000 & percent.mt<20)
+
+
+view(CON_I@meta.data)
+view(NASH_II@meta.data)
+
+CONNASH.list<-list(CON_I=CON_I,CON_II=CON_II,NASH_I=NASH_I,NASH_II=NASH_II)
+rm(CON_I,CON_II,NASH_I,NASH_II)
+
+# Normalize and identify variable features for each dataset independtly
+CONNASH.list<-lapply(X=CONNASH.list, FUN=function(X){
+  X<-NormalizeData(X) 
+  X<-FindVariableFeatures(X,selection.method="vst", nfeatures=2000)
+})
+# select features that are repeatdly variable across datasets for integeration
+features<-SelectIntegrationFeatures(object.list=CONNASH.list)
+CONNASH.anchors<- FindIntegrationAnchors(object.list=CONNASH.list, anchor.features=features)
+
+# create an 'integrated' data assay
+CONNASH.combined<-IntegrateData(anchorset = CONNASH.anchors)
+
+#we will perform downstream analysis on the corrected data
+DefaultAssay(CONNASH.combined)<- "integrated"
+
+# Run the standard workflow for visualization and clustering
+CONNASH.combined <- ScaleData(CONNASH.combined, verbose=FALSE)
+CONNASH.combined <- RunPCA(CONNASH.combined, npcs=50, verbose=FALSE)
+CONNASH.combined <- RunUMAP(CONNASH.combined, reduction="pca" ,dims=1:30)
+CONNASH.combined <- FindNeighbors(CONNASH.combined,reduction="pca" ,dims=1:30)
+CONNASH.combined <- FindClusters(CONNASH.combined, resolution=0.1)
+DimPlot(CONNASH.combined,reduction="umap" ,label=TRUE)
+
+VlnPlot(CONNASH.combined,features=c("nFeature_RNA", "nCount_RNA", "percent.mt"), ncol=3)
+View(CONNASH.combined@meta.data)
+
+DimPlot(CONNASH.combined, reduction="umap", group.by = "orig.ident")
+DimPlot(CONNASH.combined, reduction="umap", split.by = "orig.ident") 
+
+FeaturePlot(CONNASH.combined,features=c("NIPBL", "LMBRD2", "ELOVL7","STARD4"),label=TRUE, cols=c('lightgrey','blue'))
+FeaturePlot(CONNASH.combined,features=c("CLDN5", "CCL21", "PECAM1","EMCN"),label=TRUE, cols=c('lightgrey','blue'))
+FeaturePlot(CONNASH.combined,features=c("COL1A2", "LUM", "PDGFRA","PDGFRB"),label=TRUE, cols=c('lightgrey','blue'))
+FeaturePlot(CONNASH.combined,features=c("PTPRC", "CD52", "A1F1","TRBC2"),label=TRUE, cols=c('lightgrey','blue'))
+FeaturePlot(CONNASH.combined,features=c("MSLN", "CALB2", "HP","PRG4"),label=TRUE, cols=c('lightgrey','blue'))
+
+CONIPF.combined<-RenameIdents(CONIPF.combined,
+                              
+          '4'= "EPI",'9'="EPI",'1'="ENDO", '12'="ENDO",'5'="MESN",'6'="MESN",
+         '14'="MESN", '0'="IM", '2'="IM",'3'="IM", '8'="IM", '10'="IM",
+         '11'="IM",'13'="IM")
+DimPlot(CONNASH.combined, reduction="umap",label=TRUE, group.by = "orig.ident")
+DimPlot(CONNASH.combined, reduction="umap", label=TRUE,split.by = "orig.ident") 
+# save CONIPF.combined.RDS
+saveRDS(CONNASH.combined, file="GSE166178_NASH.RDS")
+CONNASH.combined<-readRDS("savedRDS/CONIPF.combined.RDS")
+
+
+# cellChat 
+library(reticulate)
+library(Seurat)
+library(CellChat)
+seurat_object<- readRDS("CONIPF.combined.RDS")
+data.input<-GetAssayData(seurat_object,assay="RNA",slot="data")
+labels<-Idents(seurat_object)
+meta<-data.frame(group=labels, row.names=names(labels))
+cellchat<-createCellChat(object=data.input,meta=meta,group.by="group")
+load("data_humanSkin_CellChat.rda")
+data.input=data_humanSkin$data
+meta=data_humanSkin$meta
+
+# prepare input data for cellchat
+cell.use=rownames(meta)[meta$condition=="LS"]
+data.input=data.input[, cell.use]
+meta=meta[cell.use,]
+unique(meta$labels)
+
+cellchat<-createCellChat(object=data.input,meta=meta,group.by="labels")
+saveRDS(cellchat, file="cellchat_humanSkin_LS.rds")
+
+# Load cellchat human database
+CellChatDB.human<-CellChatDB.human
+# Show cell chat ligand receptor catagories
+showDatabaseCategory(CellChatDB.human)
+
+# set all cellchat for cell-cell communication
+CellChatDB.use<-CellChatDB.human
+
+# set a subset all cellchat for cell-cell communication
+CellChatDB.use<-subsetDB(CellChatDB.human, search="Secreted Signaling")
+CellChatDB.use<-subsetDB(CellChatDB.human, search="ECM-Receptor")
+CellChatDB.use<-subsetDB(CellChatDB.human, search="Cell-Cell Contact")
+
+#update cellchatDB
+interaction<-CellChatDB.human$interaction
+complex<-CellChatDB.human$complex
+cofactor<-CellChatDB.human$cofactor
+geneInfo<-CellChatDB.human$geneInfo
+
+write.csv(interaction, file="interaction.csv")
+write.csv(complex, file="complex.csv")
+write.csv(cofactor, file="cofactor.csv")
+write.csv(geneInfo, file="geneInfo.csv")
