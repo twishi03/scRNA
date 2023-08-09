@@ -1,0 +1,137 @@
+install.packages("Seurat")
+install.packages("SeuratObject")
+install.packages("tidyverse")
+#remotes::install_github("satijalab/seurat", "seurat5", quiet = TRUE)
+library(CellChat)
+library(SeuratObject)
+library(tidyverse)
+library(Seurat) 
+# Read Data
+CON_I<- Read10X( data.dir="Control/CON1/")
+CON_II<- Read10X( data.dir="Control/CON2/")
+CON_III<- Read10X( data.dir="Control/CON3/")
+ 
+NASH_I<- Read10X( data.dir="NASH/NASH1/")
+NASH_II<- Read10X( data.dir="NASH/NASH2/")
+NASH_III<- Read10X( data.dir="NASH/NASH3/")
+ 
+# Create Seurat Object
+CON_I<-CreateSeuratObject(counts = CON_I, project = "CON", min.cells = 3, min.features = 200 )
+CON_I<-PercentageFeatureSet(CON_I, pattern = "^MT-", col.name = "percent.mt")
+
+CON_II<-CreateSeuratObject(counts = CON_II, project = "CON", min.cells = 3, min.features = 200 )
+CON_II<-PercentageFeatureSet(CON_II, pattern = "^MT-", col.name = "percent.mt")
+
+CON_III<-CreateSeuratObject(counts = CON_III, project = "CON", min.cells = 3, min.features = 200 )
+CON_III<-PercentageFeatureSet(CON_III, pattern = "^MT-", col.name = "percent.mt")
+
+NASH_I<-CreateSeuratObject(counts = NASH_I, project = "NASH", min.cells = 3, min.features = 200 )
+NASH_I<-PercentageFeatureSet(NASH_I, pattern = "^MT-", col.name = "percent.mt")
+
+NASH_II<-CreateSeuratObject(counts = NASH_II, project = "NASH", min.cells = 3, min.features = 200 )
+NASH_II<-PercentageFeatureSet(NASH_II, pattern = "^MT-", col.name = "percent.mt")
+
+NASH_III<-CreateSeuratObject(counts = NASH_III, project = "NASH", min.cells = 3, min.features = 200 )
+NASH_III<-PercentageFeatureSet(NASH_III, pattern = "^MT-", col.name = "percent.mt")
+ 
+
+# Filter Low quality Cells
+VlnPlot(CON_I, features = c("nFeature_RNA", "nCount_RNA", "percent.mt"),ncol = 3)
+CON_I<-subset(CON_I, subset=nFeature_RNA<4000 & nCount_RNA<20000 & percent.mt<20)
+
+VlnPlot(CON_II, features = c("nFeature_RNA", "nCount_RNA", "percent.mt"), ncol = 3)
+CON_II<-subset(CON_II, subset=nFeature_RNA<4000 & nCount_RNA<10000 & percent.mt<20)
+
+VlnPlot(CON_III, features = c("nFeature_RNA", "nCount_RNA", "percent.mt"), ncol = 3)
+CON_III<-subset(CON_III, subset=nFeature_RNA<4000 & nCount_RNA<10000 & percent.mt<20)
+
+VlnPlot(NASH_I, features = c("nFeature_RNA", "nCount_RNA", "percent.mt"), ncol = 3)
+NASH_I<-subset(NASH_I, subset=nFeature_RNA<4000 & nCount_RNA<10000 & percent.mt<20)
+
+VlnPlot(NASH_II, features = c("nFeature_RNA", "nCount_RNA", "percent.mt"), ncol = 3)
+NASH_II<-subset(NASH_II, subset=nFeature_RNA<4000 & nCount_RNA<10000 & percent.mt<20)
+
+VlnPlot(NASH_III, features = c("nFeature_RNA", "nCount_RNA", "percent.mt"), ncol = 3)
+NASH_III<-subset(NASH_III, subset=nFeature_RNA<4000 & nCount_RNA<10000 & percent.mt<20)
+
+
+view(CON_I@meta.data)
+view(NASH_II@meta.data)
+
+CONNASH.list<-list(CON_I=CON_I,CON_II=CON_II,CON_III=CON_III,NASH_I=NASH_I,NASH_II=NASH_II ,NASH_III=NASH_III)
+rm(CON_I,CON_II,NASH_I,NASH_II)
+
+# Normalize and identify variable features for each dataset independtly
+CONNASH.list<-lapply(X=CONNASH.list, FUN=function(X){
+  X<-NormalizeData(X) 
+  X<-FindVariableFeatures(X,selection.method="vst", nfeatures=2000)
+})
+# select features that are repeatdly variable across datasets for integeration
+features<-SelectIntegrationFeatures(object.list=CONNASH.list)
+CONNASH.anchors<- FindIntegrationAnchors(object.list=CONNASH.list, anchor.features=features)
+
+# create an 'integrated' data assay
+CONNASH.combined<-IntegrateData(anchorset = CONNASH.anchors)
+
+#we will perform downstream analysis on the corrected data
+DefaultAssay(CONNASH.combined)<- "integrated"
+##########################################################
+#Gene expression markers for all identity classes
+all.markers <- FindAllMarkers(CONNASH.combined)
+
+view(all.markers)
+
+write.csv(all.markers, file="All Markers/allmarkers.csv")
+
+ ##########################################################
+ 
+# find all markers of cluster 2
+ 
+head(all.markers, cluster=ENDO, n = 10)
+
+ 
+
+
+ 
+
+ 
+#####################################################
+# Run the standard workflow for visualization and clustering
+CONNASH.combined <- ScaleData(CONNASH.combined, verbose=FALSE)
+CONNASH.combined <- RunPCA(CONNASH.combined, npcs=50, verbose=FALSE)
+CONNASH.combined <- RunUMAP(CONNASH.combined, reduction="pca" ,dims=1:30)
+CONNASH.combined <- FindNeighbors(CONNASH.combined,reduction="pca" ,dims=1:30)
+CONNASH.combined <- FindClusters(CONNASH.combined, resolution=0.1)
+DimPlot(CONNASH.combined,reduction="umap" ,label=TRUE)
+
+VlnPlot(CONNASH.combined,features=c("nFeature_RNA", "nCount_RNA", "percent.mt"), ncol=3)
+View(CONNASH.combined@meta.data)
+
+DimPlot(CONNASH.combined, reduction="umap", group.by = "orig.ident")
+DimPlot(CONNASH.combined, reduction="umap", split.by = "orig.ident") 
+
+FeaturePlot(CONNASH.combined,features=c("Nkg7", "Cd44", "Stab1","Ighm"),label=TRUE, cols=c('lightgrey','blue'))
+FeaturePlot(CONNASH.combined,features=c("Cd3d", "Trbc2", "Trac","Ltb"),label=TRUE, cols=c('lightgrey','blue'))
+FeaturePlot(CONNASH.combined,features=c("Hp", "Alb", "Apoa2","Apoc3"),label=TRUE, cols=c('lightgrey','blue'))
+FeaturePlot(CONNASH.combined,features=c("Stab1", "Ptprb", "Ldb2","Lifr"),label=TRUE, cols=c('lightgrey','blue'))
+FeaturePlot(CONNASH.combined,features=c("S100a9", "S100a8", "Fpr1","Csf3r"),label=TRUE, cols=c('lightgrey','blue'))
+FeaturePlot(CONNASH.combined,features=c("Cd44", "Ms4a1", "Ighm","Bank1"),label=TRUE, cols=c('lightgrey','blue'))
+
+###############################################
+
+CONNASH.combined<-RenameIdents(CONNASH.combined,'0'="NKT", '1'="Endo", '2'="Kuffer", '3'="B-Cell", '4'="NKT", '5'="Macro",
+            '6'="MESN",'7'="ENDO", '8'="Neutro", '9'="IM", '10'="Kuffer", '11'="IM", 
+            '12'="Neutro", '13'="IM",'14'="IM",    
+            '16'="ENDO", '17'="IM")
+
+
+
+
+ 
+
+########################################################
+DimPlot(CONNASH.combined, reduction="umap",label=TRUE, group.by = "orig.ident")
+DimPlot(CONNASH.combined, reduction="umap", label=TRUE,split.by = "orig.ident") 
+# save CONNASH.combined.RDS
+saveRDS(CONNASH.combined, file="GSE166178_NASH.RDS")
+CONNASH.combined<-readRDS("savedRDS/CONNASH.combined.RDS")
