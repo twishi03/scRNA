@@ -1,0 +1,137 @@
+install.packages("Seurat")
+install.packages("SeuratObject")
+install.packages("tidyverse")
+#remotes::install_github("satijalab/seurat", "seurat5", quiet = TRUE)
+library(CellChat)
+library(SeuratObject)
+library(tidyverse)
+library(Seurat) 
+# Read Data
+CON_I<- Read10X( data.dir="Control/CON1/")
+CON_II<- Read10X( data.dir="Control/CON2/")
+CON_III<- Read10X( data.dir="Control/CON3/")
+
+DILI_I<- Read10X( data.dir="DILI/DILI1/")
+DILI_II<- Read10X( data.dir="DILI/DILI2/")
+DILI_III<- Read10X( data.dir="DILI/DILI3/")
+
+# Create Seurat Object
+CON_I<-CreateSeuratObject(counts = CON_I, project = "CON", min.cells = 3, min.features = 200 )
+CON_I<-PercentageFeatureSet(CON_I, pattern = "^MT-", col.name = "percent.mt")
+
+CON_II<-CreateSeuratObject(counts = CON_II, project = "CON", min.cells = 3, min.features = 200 )
+CON_II<-PercentageFeatureSet(CON_II, pattern = "^MT-", col.name = "percent.mt")
+
+CON_III<-CreateSeuratObject(counts = CON_III, project = "CON", min.cells = 3, min.features = 200 )
+CON_III<-PercentageFeatureSet(CON_III, pattern = "^MT-", col.name = "percent.mt")
+
+DILI_I<-CreateSeuratObject(counts = DILI_I, project = "DILI", min.cells = 3, min.features = 200 )
+DILI_I<-PercentageFeatureSet(DILI_I, pattern = "^MT-", col.name = "percent.mt")
+
+DILI_II<-CreateSeuratObject(counts = DILI_II, project = "DILI", min.cells = 3, min.features = 200 )
+DILI_II<-PercentageFeatureSet(DILI_II, pattern = "^MT-", col.name = "percent.mt")
+
+DILI_III<-CreateSeuratObject(counts = DILI_III, project = "DILI", min.cells = 3, min.features = 200 )
+DILI_III<-PercentageFeatureSet(DILI_III, pattern = "^MT-", col.name = "percent.mt")
+
+
+# Filter Low quality Cells
+VlnPlot(CON_I, features = c("nFeature_RNA", "nCount_RNA", "percent.mt"),ncol = 3)
+CON_I<-subset(CON_I, subset=nFeature_RNA<4000 & nCount_RNA<20000 & percent.mt<20)
+
+VlnPlot(CON_II, features = c("nFeature_RNA", "nCount_RNA", "percent.mt"), ncol = 3)
+CON_II<-subset(CON_II, subset=nFeature_RNA<4000 & nCount_RNA<10000 & percent.mt<20)
+
+VlnPlot(CON_III, features = c("nFeature_RNA", "nCount_RNA", "percent.mt"), ncol = 3)
+CON_III<-subset(CON_III, subset=nFeature_RNA<4000 & nCount_RNA<10000 & percent.mt<20)
+
+VlnPlot(DILI_I, features = c("nFeature_RNA", "nCount_RNA", "percent.mt"), ncol = 3)
+DILI_I<-subset(DILI_I, subset=nFeature_RNA<4000 & nCount_RNA<10000 & percent.mt<20)
+
+VlnPlot(DILI_II, features = c("nFeature_RNA", "nCount_RNA", "percent.mt"), ncol = 3)
+DILI_II<-subset(DILI_II, subset=nFeature_RNA<4000 & nCount_RNA<10000 & percent.mt<20)
+
+VlnPlot(DILI_III, features = c("nFeature_RNA", "nCount_RNA", "percent.mt"), ncol = 3)
+DILI_III<-subset(DILI_III, subset=nFeature_RNA<4000 & nCount_RNA<10000 & percent.mt<20)
+
+
+view(CON_I@meta.data)
+view(DILI_II@meta.data)
+
+CONDILI.list<-list(CON_I=CON_I,CON_II=CON_II,CON_III=CON_III,DILI_I=DILI_I,DILI_II=DILI_II ,DILI_III=DILI_III)
+rm(CON_I,CON_II, CON_III,DILI_I,DILI_II,DILI_III)
+
+# Normalize and identify variable features for each dataset independtly
+CONDILI.list<-lapply(X=CONDILI.list, FUN=function(X){
+  X<-NormalizeData(X) 
+  X<-FindVariableFeatures(X,selection.method="vst", nfeatures=2000)
+})
+# select features that are repeatdly variable across datasets for integeration
+features<-SelectIntegrationFeatures(object.list=CONDILI.list)
+CONDILI.anchors<- FindIntegrationAnchors(object.list=CONDILI.list, anchor.features=features)
+
+# create an 'integrated' data assay
+CONDILI.combined<-IntegrateData(anchorset = CONDILI.anchors)
+
+#we will perform downstream analysis on the corrected data
+DefaultAssay(CONDILI.combined)<- "Integrated"
+##########################################################
+#Gene expression markers for all identity classes
+all.markers <- FindAllMarkers(CONDILI.combined)
+
+view(all.markers)
+
+write.csv(all.markers, file="All Markers/allmarkersDILI.csv")
+
+markers <- FindAllMarkers(object = CONDILI.combined, 
+                          only.pos = TRUE,
+                          logfc.threshold = 0.25)  
+markers2 <- FindAllMarkers(CONDILI.combined) 
+view(markers2)
+write.csv(markers2, file="All Markers/markers2clusterDILI.csv")
+##########################################################
+
+# find all markers of cluster 2
+
+head(markers2, cluster=1, n = 10)
+
+# Run the standard workflow for visualization and clustering
+CONDILI.combined <- ScaleData(CONDILI.combined, verbose=FALSE)
+CONDILI.combined <- RunPCA(CONDILI.combined, npcs=50, verbose=FALSE)
+CONDILI.combined <- RunUMAP(CONDILI.combined, reduction="pca" ,dims=1:30)
+CONDILI.combined <- FindNeighbors(CONDILI.combined,reduction="pca" ,dims=1:30)
+CONDILI.combined <- FindClusters(CONDILI.combined, resolution=0.1)
+DimPlot(CONDILI.combined,reduction="umap" ,label=TRUE)
+
+VlnPlot(CONDILI.combined,features=c("nFeature_RNA", "nCount_RNA", "percent.mt"), ncol=3)
+View(CONDILI.combined@meta.data)
+
+DimPlot(CONDILI.combined, reduction="umap", group.by = "orig.ident")
+DimPlot(CONDILI.combined, reduction="umap", split.by = "orig.ident") 
+
+FeaturePlot(CONDILI.combined,features=c("Ptprb", "Cd3d", "Cd5l","Clu"),label=TRUE, cols=c('lightgrey','blue'))
+FeaturePlot(CONDILI.combined,features=c("Cd3d", "Cd3g", "Trac","Trbc2"),label=TRUE, cols=c('lightgrey','blue'))
+FeaturePlot(CONDILI.combined,features=c("Cd5l", "S100a9", "C1qb","Igkc"),label=TRUE, cols=c('lightgrey','blue'))
+FeaturePlot(CONDILI.combined,features=c("Fam167b", "Gzma", "Cd8b1","Fabp1"),label=TRUE, cols=c('lightgrey','blue'))
+FeaturePlot(CONDILI.combined,features=c("Clu", "Irf8", "Ptprb","Cd3d"),label=TRUE, cols=c('lightgrey','blue'))
+FeaturePlot(CONDILI.combined,features=c("Cd44", "Ms4a1", "Ighm","Bank1"),label=TRUE, cols=c('lightgrey','blue'))
+
+###############################################
+
+CONDILI.combined<-RenameIdents(CONDILI.combined,'0'="ENDO", '1'="T-Cells", '2'="DC", '3'="Macro", '4'="Kuffer", '5'="Plasma",
+                               '6'="ENDO",'7'="NKT", '8'="T-Cells", '9'="Hepatocyte", '10'="Hepatocyte", '11'="DC" 
+                                )
+
+
+
+
+
+
+########################################################
+DimPlot(CONDILI.combined, reduction="umap",label=TRUE, group.by = "orig.ident")
+DimPlot(CONDILI.combined, reduction="umap", label=TRUE,split.by = "orig.ident") 
+# save CONDILI.combined.RDS
+saveRDS(CONDILI.combined, file="GSE166178_DILI.RDS")
+CONDILI.combined<-readRDS("savedRDS/CONDILI.combined.RDS")
+
+######################################
